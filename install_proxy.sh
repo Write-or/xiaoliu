@@ -2,74 +2,88 @@
 
 set -e
 
-echo "======== Termux SOCKS5 + cpolar 快速部署 ========="
+echo "======================================"
+echo "  Termux 一键部署 SOCKS5 + cpolar"
+echo "======================================"
 
-# 替换为清华 Termux 软件源
-echo "[*] 设置清华源..."
+# 1. 替换为清华源
+echo "[*] 替换 Termux 源为清华源..."
 cat > $PREFIX/etc/apt/sources.list <<EOF
 deb https://mirrors.tuna.tsinghua.edu.cn/termux stable main
 EOF
 
-# 更新系统并安装必要工具
-echo "[*] 更新系统并安装依赖..."
+# 2. 更新软件包
+echo "[*] 更新软件包..."
 pkg update -y && pkg upgrade -y
-pkg install -y git clang make unzip curl dnsutils
 
-# 克隆并构建 microsocks
-if [ ! -d "microsocks" ]; then
-  echo "[*] 克隆 microsocks 仓库..."
-  git clone https://github.com/rofl0r/microsocks
+# 3. 安装必要工具
+echo "[*] 安装 wget unzip curl git clang make dnsutils..."
+pkg install -y wget unzip curl git clang make dnsutils
+
+# 4. 克隆并编译 microsocks
+if [ ! -d "./microsocks" ]; then
+    echo "[*] 克隆 microsocks..."
+    git clone https://github.com/rofl0r/microsocks
+else
+    echo "[√] microsocks 目录已存在，跳过克隆"
 fi
 
 cd microsocks
-echo "[*] 编译 microsocks..."
-make
+if [ ! -f "./microsocks" ]; then
+    echo "[*] 编译 microsocks..."
+    make
+else
+    echo "[√] microsocks 已编译，跳过 make"
+fi
 cd ..
 
-# 下载并解压 cpolar（仅当不存在时）
+# 5. 下载并解压 cpolar
 if [ ! -f "./cpolar" ]; then
-  echo "[*] 下载并解压 cpolar..."
-  curl -O -L https://cpolar.com/static/downloads/cpolar-stable-linux-arm.zip
-  unzip cpolar-stable-linux-arm.zip
-  chmod +x cpolar
-  rm -f cpolar-stable-linux-arm.zip
+    echo "[*] 下载 cpolar..."
+    curl -L -o cpolar.zip https://cpolar.com/static/downloads/cpolar-stable-linux-arm.zip
+    unzip cpolar.zip -d cpolar_tmp
+    mv cpolar_tmp/cpolar ./cpolar
+    chmod +x cpolar
+    rm -rf cpolar_tmp cpolar.zip
+else
+    echo "[√] cpolar 已存在，跳过下载"
 fi
 
-# 配置 cpolar token
-echo "[*] 请访问 https://dashboard.cpolar.com 获取你的 authtoken"
-read -p "[*] 输入你的 cpolar authtoken: " cptoken
-./cpolar authtoken "$cptoken"
+# 6. 配置 cpolar authtoken
+if ! ./cpolar authtoken list | grep -q "Your authtoken"; then
+    echo "[*] 请访问 https://dashboard.cpolar.com 获取你的 cpolar authtoken"
+    read -p "[*] 输入你的 cpolar authtoken: " cpolar_token
+    ./cpolar authtoken "$cpolar_token"
+else
+    echo "[√] cpolar 已授权过 authtoken"
+fi
 
-# 生成后台启动脚本
-echo "[*] 生成 start_proxy.sh 启动脚本..."
+# 7. 创建启动脚本
+echo "[*] 创建启动脚本 start_proxy.sh..."
 
 cat > start_proxy.sh <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 
-# 杀掉旧进程
 pkill -f microsocks || true
 pkill -f cpolar || true
 sleep 1
 
-echo "[*] 启动 microsocks（监听 127.0.0.1:1080，后台运行）..."
+echo "[*] 启动 microsocks（本地 SOCKS5）..."
 cd microsocks
-nohup ../microsocks -i 127.0.0.1 -p 1080 > ../microsocks.log 2>&1 &
+./microsocks -i 127.0.0.1 -p 1080 &
 cd ..
 
 sleep 1
 
-echo "[*] 启动 cpolar，穿透端口 1080（后台运行）..."
-nohup ./cpolar tcp 1080 > cpolar.log 2>&1 &
+echo "[*] 启动 cpolar 穿透端口 1080..."
+./cpolar tcp 1080
 EOF
 
 chmod +x start_proxy.sh
 
 echo ""
-echo "✅ 安装完成！运行以下命令启动 SOCKS5 + cpolar 服务："
+echo "✅ 安装完成！使用以下命令启动服务："
 echo ""
 echo "   ./start_proxy.sh"
 echo ""
-echo "🌐 启动成功后，你将看到 cpolar 分配的公网地址，如："
-echo "   tcp://x.x.x.x:xxxx"
-echo ""
-echo "然后在其他设备上配置 SOCKS5 代理：地址为该公网地址，端口为显示的端口。"
+echo "然后查看 cpolar 输出的公网 TCP 地址，在其他设备中配置 SOCKS5 即可。"
